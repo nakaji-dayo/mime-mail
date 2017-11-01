@@ -35,6 +35,7 @@ module Network.Mail.Mime
     , plainPart
     , randomString
     , quotedPrintable
+    , encodeFileName
     ) where
 
 import qualified Data.ByteString.Lazy as L
@@ -63,6 +64,7 @@ import qualified Data.ByteString as S
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Codec.Text.IConv (convert)
 
 -- | Generates a random sequence of alphanumerics of the given length.
 randomString :: RandomGen d => Int -> d -> (String, d)
@@ -164,8 +166,8 @@ partToPair (Part contentType encoding disposition headers content) =
       $ (case disposition of
             Nothing -> id
             Just fn ->
-                (:) ("Content-Disposition", "attachment; filename="
-                                            `T.append` fn))
+                (:) ("Content-Disposition", "attachment; filename=\"=?ISO-2022-JP?B?"
+                      `T.append` (encodeFileName fn) `T.append` "?=\""))
       $ headers
     builder =
         case encoding of
@@ -173,6 +175,8 @@ partToPair (Part contentType encoding disposition headers content) =
             Base64 -> base64 content
             QuotedPrintableText -> quotedPrintable True content
             QuotedPrintableBinary -> quotedPrintable False content
+
+encodeFileName = TE.decodeUtf8 . Base64.encode . L.toStrict . convert "UTF-8" "ISO-2022-JP" . L.fromStrict . TE.encodeUtf8
 
 showPairs :: RandomGen g
           => Text -- ^ multipart type, eg mixed, alternative
@@ -241,7 +245,7 @@ showHeader :: (S.ByteString, Text) -> Builder
 showHeader (k, v) = mconcat
     [ fromByteString (sanitizeFieldName k)
     , fromByteString ": "
-    , encodeIfNeeded (sanitizeHeader v)
+    , if k == "Content-Disposition" then fromText v else encodeIfNeeded (sanitizeHeader v)
     , fromByteString "\n"
     ]
 
@@ -331,7 +335,7 @@ sendmailCustomCaptureOutput :: FilePath
                                -> IO (S.ByteString, S.ByteString)
 sendmailCustomCaptureOutput sm opts lbs = sendmailCustomAux True sm opts lbs
 
-sendmailCustomAux :: Bool 
+sendmailCustomAux :: Bool
                      -> FilePath
                      -> [String]
                      -> L.ByteString
@@ -457,8 +461,8 @@ addAttachmentCid :: Text -- ^ content type
                  -> Mail
                  -> IO Mail
 addAttachmentCid ct fn cid mail =
-  getAttachmentPart ct fn >>= (return.addToMail.addHeader) 
-  where 
+  getAttachmentPart ct fn >>= (return.addToMail.addHeader)
+  where
     addToMail part = addPart [part] mail
     addHeader part = part { partHeaders = header:ph }
       where ph = partHeaders part
